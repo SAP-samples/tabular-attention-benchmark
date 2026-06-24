@@ -1,0 +1,95 @@
+[project]
+name = "tabular-attention-benchmark"
+version = "0.1.0"
+description = "Benchmarking different attention implementations for tabular data"
+readme = "README.md"
+requires-python = "==3.12.10"
+dependencies = [
+    "einops",
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "seaborn",
+    "tqdm",
+]
+
+[dependency-groups]
+base = [
+    "torch==2.10",
+]
+fa2 = [
+    "torch==2.8",
+    # Flash Attention 2
+    "flash_attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl",
+]
+fa3 = [
+    "torch==2.10",
+    # Flash Attention 3
+    "flash_attn_3",
+]
+fa4 = [
+    "torch==2.10",
+    # Flash Attention 4
+    "flash-attn-4==4.0.0b4",
+]
+fa4_optim = [
+    "torch==2.10",
+    # Flash Attention 4 with optimizations for column attention forward
+    "flash-attn-4==4.0.0b4",
+]
+sage = [
+    "torch==2.10",
+    # SageAttention 2++
+    "sageattention",
+]
+vllm = [
+    "torch==2.10",
+    # vLLM
+    "vllm @ https://github.com/vllm-project/vllm/releases/download/v0.17.0/vllm-0.17.0+cu130-cp38-abi3-manylinux_2_35_x86_64.whl",
+]
+dev = [
+    "pytest>=9.0.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["tabular_attn"]
+
+[tool.uv]
+conflicts = [
+    [
+        { group = "base" },
+        { group = "fa2" },
+        { group = "fa3" },
+        { group = "fa4" },
+        { group = "fa4_optim" },
+        { group = "sage" },
+        { group = "vllm" },
+    ],
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu130", group = "base" },
+    { index = "pytorch-cu128", group = "fa2" },
+    { index = "pytorch-cu130", group = "fa3" },
+    { index = "pytorch-cu130", group = "fa4" },
+    { index = "pytorch-cu130", group = "fa4_optim" },
+    { index = "pytorch-cu130", group = "sage" },
+    { index = "pytorch-cu130", group = "vllm" },
+]
+flash_attn_3 = { path = "build/wheels/flash_attn_3-3.0.0+cu130-cp39-abi3-linux_x86_64.whl", group = "fa3" }
+sageattention = { path = "build/wheels/sageattention-2.2.0+cu130-cp312-cp312-linux_x86_64.whl", group = "sage" }

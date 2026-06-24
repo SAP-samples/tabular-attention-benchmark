@@ -1,0 +1,98 @@
+{
+  "metadata": {
+    "timestamp": "2026-03-07T20:22:30.519258",
+    "gpu": "NVIDIA H100 NVL",
+    "pytorch_version": "2.10.0+cu130",
+    "cuda_version": "13.0",
+    "cudnn_version": "9.15.1",
+    "cudnn_enabled": true,
+    "dtype": "bfloat16",
+    "causal": false,
+    "nheads": 16,
+    "headdim": 64,
+    "col_attn_rows": 1024,
+    "col_attn_cols": [
+      16,
+      32,
+      64,
+      128,
+      256,
+      512,
+      1024,
+      2048
+    ],
+    "row_attn_rows": [
+      32,
+      64,
+      128,
+      256,
+      512,
+      1024,
+      2048,
+      4096,
+      8192,
+      16384
+    ],
+    "row_attn_cols": 64,
+    "warmup": 5,
+    "rep": 50
+  },
+  "results": [
+    {
+      "attn_type": "col",
+      "backend": "fa4",
+      "rows": 1024,
+      "cols": 16,
+      "error": "OpError: expects the M-mode to be 64, but got 32\n\u001b[1mError Code:\u001b[0m MmaF16BF16Op error\n\n\u001b[92m\ud83d\udca1 Suggestions:\u001b[0m\n Check your Op construction code"
+    },
+    {
+      "attn_type": "col",
+      "backend": "fa4",
+      "rows": 1024,
+      "cols": 32,
+      "error": "OpError: expects the M-mode to be 64, but got 32\n\u001b[1mError Code:\u001b[0m MmaF16BF16Op error\n\n\u001b[92m\ud83d\udca1 Suggestions:\u001b[0m\n Check your Op construction code"
+    },
+    {
+      "attn_type": "col",
+      "backend": "fa4",
+      "rows": 1024,
+      "cols": 64,
+      "error": "OpError: expects the M-mode to be 64, but got 32\n\u001b[1mError Code:\u001b[0m MmaF16BF16Op error\n\n\u001b[92m\ud83d\udca1 Suggestions:\u001b[0m\n Check your Op construction code"
+    },
+    {
+      "attn_type": "col",
+      "backend": "fa4",
+      "rows": 1024,
+      "cols": 128,
+      "error": "OpError: expects the M-mode to be 64, but got 32\n\u001b[1mError Code:\u001b[0m MmaF16BF16Op error\n\n\u001b[92m\ud83d\udca1 Suggestions:\u001b[0m\n Check your Op construction code"
+    },
+    {
+      "attn_type": "col",
+      "backend": "fa4",
+      "rows": 1024,
+      "cols": 256,
+      "error": "OpError: expects the M-mode to be 64, but got 32\n\u001b[1mError Code:\u001b[0m MmaF16BF16Op error\n\n\u001b[92m\ud83d\udca1 Suggestions:\u001b[0m\n Check your Op construction code"
+    },
+    {
+      "attn_type": "col",
+      "backend": "fa4",
+      "rows": 1024,
+      "cols": 512,
+      "error": "OpError: expects the M-mode to be 64, but got 32\n\u001b[1mError Code:\u001b[0m MmaF16BF16Op error\n\n\u001b[92m\ud83d\udca1 Suggestions:\u001b[0m\n Check your Op construction code"
+    },
+    {
+      "attn_type": "col",
+      "backend": "fa4",
+      "rows": 1024,
+      "cols": 1024,
+      "error": "OpError: expects the M-mode to be 64, but got 32\n\u001b[1mError Code:\u001b[0m MmaF16BF16Op error\n\n\u001b[92m\ud83d\udca1 Suggestions:\u001b[0m\n Check your Op construction code"
+    },
+    {
+      "attn_type": "col",
+      "backend": "fa4",
+      "rows": 1024,
+      "cols": 2048,
+      "error": "OpError: expects the M-mode to be 64, but got 32\n\u001b[1mError Code:\u001b[0m MmaF16BF16Op error\n\n\u001b[92m\ud83d\udca1 Suggestions:\u001b[0m\n Check your Op construction code"
+    }
+  ]
+}

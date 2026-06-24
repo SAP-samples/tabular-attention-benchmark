@@ -1,0 +1,238 @@
+{
+  "metadata": {
+    "gpu": "NVIDIA H100 NVL",
+    "pytorch_version": "2.10.0+cu130",
+    "cuda_version": "13.0",
+    "dtype": "bfloat16",
+    "batch": 1,
+    "cols": 64,
+    "nheads": 12,
+    "headdim": 64,
+    "rep": 100,
+    "timestamp": "2026-05-07T08:03:53"
+  },
+  "single_copy": [
+    {
+      "rows": 32,
+      "cols": 64,
+      "batch": 1,
+      "nheads": 12,
+      "headdim": 64,
+      "batch_eff": 64,
+      "tensor_bytes": 3145728,
+      "tensor_mb": 3.0,
+      "mean_time_ms": 0.010016959952190518,
+      "std_time_ms": 0.001238217627894864,
+      "bandwidth_gb_s": 628.0803786805775,
+      "rep": 100
+    },
+    {
+      "rows": 64,
+      "cols": 64,
+      "batch": 1,
+      "nheads": 12,
+      "headdim": 64,
+      "batch_eff": 64,
+      "tensor_bytes": 6291456,
+      "tensor_mb": 6.0,
+      "mean_time_ms": 0.013964159972965717,
+      "std_time_ms": 0.0002863877000839286,
+      "bandwidth_gb_s": 901.0862110116341,
+      "rep": 100
+    },
+    {
+      "rows": 128,
+      "cols": 64,
+      "batch": 1,
+      "nheads": 12,
+      "headdim": 64,
+      "batch_eff": 64,
+      "tensor_bytes": 12582912,
+      "tensor_mb": 12.0,
+      "mean_time_ms": 0.02283648006618023,
+      "std_time_ms": 0.0003040344370409712,
+      "bandwidth_gb_s": 1102.0010057184522,
+      "rep": 100
+    },
+    {
+      "rows": 256,
+      "cols": 64,
+      "batch": 1,
+      "nheads": 12,
+      "headdim": 64,
+      "batch_eff": 64,
+      "tensor_bytes": 25165824,
+      "tensor_mb": 24.0,
+      "mean_time_ms": 0.040813119783997535,
+      "std_time_ms": 0.00035900235086175185,
+      "bandwidth_gb_s": 1233.2222644673834,
+      "rep": 100
+    },
+    {
+      "rows": 512,
+      "cols": 64,
+      "batch": 1,
+      "nheads": 12,
+      "headdim": 64,
+      "batch_eff": 64,
+      "tensor_bytes": 50331648,
+      "tensor_mb": 48.0,
+      "mean_time_ms": 0.07507072001695633,
+      "std_time_ms": 0.00031697451925683504,
+      "bandwidth_gb_s": 1340.912888237425,
+      "rep": 100
+    },
+    {
+      "rows": 1024,
+      "cols": 64,
+      "batch": 1,
+      "nheads": 12,
+      "headdim": 64,
+      "batch_eff": 64,
+      "tensor_bytes": 100663296,
+      "tensor_mb": 96.0,
+      "mean_time_ms": 0.14303167924284935,
+      "std_time_ms": 0.00030417214942948285,
+      "bandwidth_gb_s": 1407.5664430826785,
+      "rep": 100
+    },
+    {
+      "rows": 2048,
+      "cols": 64,
+      "batch": 1,
+      "nheads": 12,
+      "headdim": 64,
+      "batch_eff": 64,
+      "tensor_bytes": 201326592,
+      "tensor_mb": 192.0,
+      "mean_time_ms": 0.2788319998979569,
+      "std_time_ms": 0.0003246227260199378,
+      "bandwidth_gb_s": 1444.0709249560937,
+      "rep": 100
+    },
+    {
+      "rows": 4096,
+      "cols": 64,
+      "batch": 1,
+      "nheads": 12,
+      "headdim": 64,
+      "batch_eff": 64,
+      "tensor_bytes": 402653184,
+      "tensor_mb": 384.0,
+      "mean_time_ms": 0.549066241979599,
+      "std_time_ms": 0.00033561174568102564,
+      "bandwidth_gb_s": 1466.6834462387544,
+      "rep": 100
+    },
+    {
+      "rows": 8192,
+      "cols": 64,
+      "batch": 1,
+      "nheads": 12,
+      "headdim": 64,
+      "batch_eff": 64,
+      "tensor_bytes": 805306368,
+      "tensor_mb": 768.0,
+      "mean_time_ms": 1.0909558379650115,
+      "std_time_ms": 0.0003185120161785657,
+      "bandwidth_gb_s": 1476.3317450175787,
+      "rep": 100
+    },
+    {
+      "rows": 16384,
+      "cols": 64,
+      "batch": 1,
+      "nheads": 12,
+      "headdim": 64,
+      "batch_eff": 64,
+      "tensor_bytes": 1610612736,
+      "tensor_mb": 1536.0,
+      "mean_time_ms": 2.1753551936149598,
+      "std_time_ms": 0.00033878841252172703,
+      "bandwidth_gb_s": 1480.781382946035,
+      "rep": 100
+    }
+  ],
+  "triple_copy": [
+    {
+      "rows": 32,
+      "total_copy_bytes": 9437184,
+      "total_copy_mb": 9.0,
+      "mean_time_ms": 0.024111040011048315,
+      "std_time_ms": 0.00042883473740129574,
+      "bandwidth_gb_s": 782.8101977911889
+    },
+    {
+      "rows": 64,
+      "total_copy_bytes": 18874368,
+      "total_copy_mb": 18.0,
+      "mean_time_ms": 0.0331683199480176,
+      "std_time_ms": 0.0002753299055015314,
+      "bandwidth_gb_s": 1138.0961127714932
+    },
+    {
+      "rows": 128,
+      "total_copy_bytes": 37748736,
+      "total_copy_mb": 36.0,
+      "mean_time_ms": 0.05675871975719929,
+      "std_time_ms": 0.00032087249393111935,
+      "bandwidth_gb_s": 1330.1475495388333
+    },
+    {
+      "rows": 256,
+      "total_copy_bytes": 75497472,
+      "total_copy_mb": 72.0,
+      "mean_time_ms": 0.11541887946426868,
+      "std_time_ms": 0.0002909272136333355,
+      "bandwidth_gb_s": 1308.2343607983557
+    },
+    {
+      "rows": 512,
+      "total_copy_bytes": 150994944,
+      "total_copy_mb": 144.0,
+      "mean_time_ms": 0.22049503907561302,
+      "std_time_ms": 0.00032361081809393727,
+      "bandwidth_gb_s": 1369.599467026741
+    },
+    {
+      "rows": 1024,
+      "total_copy_bytes": 301989888,
+      "total_copy_mb": 288.0,
+      "mean_time_ms": 0.4226521587371826,
+      "std_time_ms": 0.0003967819079406963,
+      "bandwidth_gb_s": 1429.0232843116084
+    },
+    {
+      "rows": 2048,
+      "total_copy_bytes": 603979776,
+      "total_copy_mb": 576.0,
+      "mean_time_ms": 0.8306425607204437,
+      "std_time_ms": 0.00036838067794420893,
+      "bandwidth_gb_s": 1454.2471203886985
+    },
+    {
+      "rows": 4096,
+      "total_copy_bytes": 1207959552,
+      "total_copy_mb": 1152.0,
+      "mean_time_ms": 1.6460281598567963,
+      "std_time_ms": 0.007042718806770371,
+      "bandwidth_gb_s": 1467.7264720733476
+    },
+    {
+      "rows": 8192,
+      "total_copy_bytes": 2415919104,
+      "total_copy_mb": 2304.0,
+      "mean_time_ms": 3.307417919635773,
+      "std_time_ms": 0.01783694867598309,
+      "bandwidth_gb_s": 1460.9094844996494
+    },
+    {
+      "rows": 16384,
+      "total_copy_bytes": 4831838208,
+      "total_copy_mb": 4608.0,
+      "mean_time_ms": 6.665074863433838,
+      "std_time_ms": 0.06285368013198868,
+      "bandwidth_gb_s": 1449.8976551662147
+    }
+  ]
+}

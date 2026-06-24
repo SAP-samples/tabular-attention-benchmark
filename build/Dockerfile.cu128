@@ -1,0 +1,27 @@
+FROM nvidia/cuda:12.8.1-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install minimal deps: curl for uv, git/ninja for builds
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl git ninja-build && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install uv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+
+# Install Python 3.12 via uv and create venv
+RUN uv venv /venv --python 3.12
+ENV VIRTUAL_ENV=/venv
+ENV PATH="/venv/bin:$PATH"
+
+# Install build deps + PyTorch
+RUN uv pip install setuptools wheel packaging ninja && \
+    uv pip install torch==2.8 --index-url https://download.pytorch.org/whl/cu128
+
+# Build environment
+ENV TORCH_CUDA_ARCH_LIST="8.0;9.0;10.0"
+ENV MAX_JOBS=20
+
+WORKDIR /build

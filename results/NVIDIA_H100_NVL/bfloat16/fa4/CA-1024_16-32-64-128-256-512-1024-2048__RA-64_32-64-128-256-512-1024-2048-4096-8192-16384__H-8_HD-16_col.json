@@ -1,0 +1,98 @@
+{
+  "metadata": {
+    "timestamp": "2026-03-10T12:01:42.458411",
+    "gpu": "NVIDIA H100 NVL",
+    "pytorch_version": "2.10.0+cu130",
+    "cuda_version": "13.0",
+    "cudnn_version": "9.15.1",
+    "cudnn_enabled": true,
+    "dtype": "bfloat16",
+    "causal": false,
+    "nheads": 8,
+    "headdim": 16,
+    "col_attn_rows": 1024,
+    "col_attn_cols": [
+      16,
+      32,
+      64,
+      128,
+      256,
+      512,
+      1024,
+      2048
+    ],
+    "row_attn_rows": [
+      32,
+      64,
+      128,
+      256,
+      512,
+      1024,
+      2048,
+      4096,
+      8192,
+      16384
+    ],
+    "row_attn_cols": 64,
+    "warmup": 5,
+    "rep": 50
+  },
+  "results": [
+    {
+      "attn_type": "col",
+      "backend": "fa4",
+      "rows": 1024,
+      "cols": 16,
+      "error": ""
+    },
+    {
+      "attn_type": "col",
+      "backend": "fa4",
+      "rows": 1024,
+      "cols": 32,
+      "error": ""
+    },
+    {
+      "attn_type": "col",
+      "backend": "fa4",
+      "rows": 1024,
+      "cols": 64,
+      "error": ""
+    },
+    {
+      "attn_type": "col",
+      "backend": "fa4",
+      "rows": 1024,
+      "cols": 128,
+      "error": ""
+    },
+    {
+      "attn_type": "col",
+      "backend": "fa4",
+      "rows": 1024,
+      "cols": 256,
+      "error": ""
+    },
+    {
+      "attn_type": "col",
+      "backend": "fa4",
+      "rows": 1024,
+      "cols": 512,
+      "error": ""
+    },
+    {
+      "attn_type": "col",
+      "backend": "fa4",
+      "rows": 1024,
+      "cols": 1024,
+      "error": ""
+    },
+    {
+      "attn_type": "col",
+      "backend": "fa4",
+      "rows": 1024,
+      "cols": 2048,
+      "error": ""
+    }
+  ]
+}
