@@ -1,4 +1,6 @@
 # Tabular Attention Benchmark
+[![REUSE status](https://api.reuse.software/badge/github.com/SAP-samples/tabular-attention-benchmark)](https://api.reuse.software/info/github.com/SAP-samples/tabular-attention-benchmark)
+
 
 Benchmarking different attention implementations for tabular data.
 
