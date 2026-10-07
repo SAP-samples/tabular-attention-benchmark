@@ -6,6 +6,17 @@ Tabular tensors have shape `(batch, rows, cols, nheads, headdim)`. We benchmark 
 - **Column attention**: attend across columns (`seq_len=cols`, `batch_eff=batch*rows`) — memory layout is already contiguous
 - **Row attention**: attend across rows (`seq_len=rows`, `batch_eff=batch*cols`) — requires transpose; some backends (FA3, FA4) can operate on strided tensors directly
 
+## Citation
+If you use our works, please cite
+```bibtex
+@article{schambach2026benchmarking,
+  title={Benchmarking Attention for Tabular Foundation Models},
+  author={Schambach, Maximilian and Biehl, Clemens and Thelin, Sam},
+  journal={Conference on Neural Information Processing Systems},
+  year={2026}
+}
+```
+
 ## Backends
 
 | Backend | Module | Dependency group | Description |
