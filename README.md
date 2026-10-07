@@ -8,13 +8,16 @@ Tabular tensors have shape `(batch, rows, cols, nheads, headdim)`. We benchmark 
 
 ## Backends
 
-| Backend          | Module      | Dependency group | Description                                                   |
-|------------------|-------------|------------------|---------------------------------------------------------------|
-| `sdpa_efficient` | `base.py`   | `base`           | PyTorch SDPA with xformers efficient attention                |
-| `sdpa_cudnn`     | `base.py`   | `base`           | PyTorch SDPA with cuDNN attention                             |
-| `fa2`            | `fa2.py`    | `fa2`            | FlashAttention-2 (includes KV-packed variants)                |
-| `fa3`            | `fa3.py`    | `fa3`            | FlashAttention-3                                              |
-| `fa4`            | `fa4.py`    | `fa4`            | FlashAttention-4 (requires Hopper/Blackwell, SM 9.0+)         |
+| Backend | Module | Dependency group | Description |
+|---|---|---|---|
+| `sdpa_efficient` | `base.py` | `base` | PyTorch SDPA with xformers efficient attention |
+| `sdpa_cudnn` | `base.py` | `base` | PyTorch SDPA with cuDNN attention |
+| `fa2` | `fa2.py` | `fa2` | FlashAttention-2 (includes KV-packed variants) |
+| `fa3` | `fa3.py` | `fa3` | FlashAttention-3 |
+| `fa4` | `fa4.py` | `fa4` | FlashAttention-4 (requires Hopper/Blackwell, SM 9.0+) |
+| `sage` | `sage.py` | `sage` | SageAttention 2++ (inference-only, no backward pass) |
+| `vllm` | `vllm.py` | `vllm` | vLLM Triton prefill kernel (inference-only, no backward pass) |
+| `optim` | `optim.py` | `fa3` | Combined optimal: dispatches col attention to SDPA efficient/cuDNN based on shape, row attention to FA3 |
 
 Each backend has its own dependency group in `pyproject.toml` with a pinned torch version. The groups are mutually exclusive (declared as conflicts in `[tool.uv]`) since they require different torch/CUDA builds.
 
@@ -27,11 +30,17 @@ tabular_attn/
 ├── fa2.py             # FlashAttention-2
 ├── fa3.py             # FlashAttention-3
 ├── fa4.py             # FlashAttention-4
+├── sage.py            # SageAttention 2++ (inference-only)
+├── vllm.py            # vLLM Triton prefill kernel (inference-only)
+|__ fa4_optim          # Directory with agent-optimised FA4 code for B200
 run_benchmark.py       # Benchmark runner
 run_benchmark_plots.py # Plot generation from benchmark results
+sweeps.py              # Sweep config: shapes, ranges, row caps, rep schedule
 build/                 # Docker images and pre-built wheel scripts
 ablation/layout/       # Layout ablation (b,R,C,h,d vs b,C,R,h,d) investigation
+paper/icml_workshop/   # ICML workshop paper source (LaTeX)
 ```
+
 
 ## Installation
 Depending on your system, it might be necessary to update your Nvidia drivers to support evaluation of all CUDA 13-linked compiled kernels.
@@ -86,6 +95,8 @@ They are built inside Docker containers to match the exact CUDA/torch ABI. To re
 ```bash
 cd build/
 make build-fa3     # FA3 wheel  (CUDA 13.0 image)
+make build-sage    # SageAttention wheel (CUDA 13.0 image)
+make build-all     # All three
 ```
 
 The FA2 wheel is pulled from the official release pages, however you may optionally also compile it from scratch:
@@ -117,6 +128,9 @@ make test-cudnn      # SDPA cuDNN (torch 2.10, CUDA 13.0)
 make test-fa2        # FlashAttention-2 (torch 2.8, CUDA 12.8)
 make test-fa3        # FlashAttention-3 (torch 2.10, CUDA 13.0)
 make test-fa4        # FlashAttention-4 (torch 2.10, CUDA 13.0, Hopper+ only)
+make test-sage       # SageAttention (torch 2.10, CUDA 13.0)
+make test-vllm       # vLLM Triton (torch 2.10, CUDA 13.0)
+make test-optim      # Optimal dispatch (torch 2.10, CUDA 13.0)
 make test-all        # Run all test suites sequentially
 ```
 
@@ -129,10 +143,46 @@ Benchmarks run one process per `(backend, headdim, nheads, direction)` combinati
 Depending on your GPU, run one of the following:
 ```bash
 make benchmark           # All backends
+make benchmark-a100      # A100 (no FA4 — requires Hopper+)
 make benchmark-h100      # H100 (all backends)
+make benchmark-gb200     # GB200 (all backends)
 ```
 
-Results are saved to `results/{GPU}/{dtype}/{backend}/`.
+Or a single backend:
+```bash
+make bench-sdpa-cudnn    # bench-sdpa-efficient, bench-fa2, bench-fa3, bench-fa4, bench-sage, bench-vllm, ...
+```
+
+Results are saved to `results/{GPU}/{dtype}/{backend}/H-{nheads}_HD-{headdim}{_col|_row}.json`.
+
+### Configuring sweeps (`sweeps.py`)
+
+Which shapes are benchmarked, their row/col ranges, per-shape row caps, and the
+repetition schedule all live in [`sweeps.py`](sweeps.py) — not in the Makefile or CLI:
+
+- **`SHAPES`** — dict keyed `(headdim, nheads)`; per shape you can set the `directions`
+  to run and a `row_max_rows` cap (heavy shapes OOM at lower row counts, e.g. `(128, 16)`
+  is capped at 16384 rows).
+- **`REP_SCHEDULE`** — maps sequence length to repetition count, so small/fast shapes get
+  many reps (stable timing) and huge/slow shapes get few (so the sweep finishes). Applies
+  to both column (seqlen = cols) and row (seqlen = rows) attention.
+
+The `SHAPES` list in the `Makefile` selects *which* `(headdim, nheads)` pairs run on a
+given GPU (and excludes headdim=16 on GB200); `sweeps.py` defines *how* each one is swept.
+
+### Resuming and extending
+
+Runs are **resumable and skip-existing by default**: each shape already measured
+successfully is skipped, so re-running the same command only fills gaps. To extend a
+sweep, widen a range in `sweeps.py` (e.g. raise a `row_max_rows` cap) and re-run — only
+the new shapes are computed and merged into the existing file; prior results are untouched.
+Error records (e.g. transient OOM) are always retried.
+
+Overrides:
+```bash
+make bench-fa2 FORCE=1           # recompute all shapes, ignoring existing results
+make bench-fa2 REP_OVERRIDE=10   # use a fixed rep count instead of the per-shape schedule
+```
 
 ## Plotting
 To reproduce the plots used in the paper and create a custom plot for every evaluated GPU and shape combination, run
@@ -149,7 +199,68 @@ This generates all plots under `plots/`:
 4. **Inference-only** (`--inference-only`) — H100 forward-pass including vLLM and SageAttention
 5. **Head dimension ablation** (`--headdim-ablation`) — FA3 vs cuDNN across D={16, 64, 128} on H100
 6. **Roofline analysis** (`--roofline`) — memory-bound ceiling for column attention and copy-overhead decomposition for row attention (uses measured copy bandwidth from `results/copy_bandwidth.json`)
+7. **Batch-size sweep** (`--batch-sweep`) — forward TFLOPS vs sequence length, one line per batch size, for a fixed geometry (populated by `make bench-batch`). Shows throughput is governed by sequence length, not batch size.
 
+The plotter reads both result-file formats: the stable `H-{nheads}_HD-{headdim}{_col|_row}.json` (A100, H100) and the legacy `CA-..._RA-..._H-..._HD-...` form (B200). Batch-sweep files (`_B{n}`) are excluded from the standard plots and shown only by `--batch-sweep`.
+
+
+## Adding a New Backend
+
+To add a backend called `mybackend`, wire it through six places. Keep `sweeps.py` as is — it defines shapes/reps only and is backend-agnostic.
+
+**1. Implement the kernel** — `tabular_attn/mybackend.py`:
+```python
+"""MyBackend tabular row and column attention backends."""
+import torch
+
+try:
+    import mybackend_lib           # the actual kernel package
+    MYBACKEND_AVAILABLE = True
+except ImportError:
+    MYBACKEND_AVAILABLE = False
+
+
+def col_attn_mybackend(q, k, v, *, causal=False):
+    # q,k,v: (batch, rows, cols, nheads, headdim); seq dim = cols (contiguous).
+    # Reshape to (batch*rows, cols, nheads, headdim), run attention, reshape back.
+    ...
+
+def row_attn_mybackend(q, k, v, *, causal=False):
+    # seq dim = rows; requires transpose(1,2). SDPA/FA2 need .contiguous();
+    # FA3/FA4 can take strided tensors via .reshape().
+    ...
+```
+Follow the signature convention: accept `(q, k, v, *, causal=False)`, tensors of
+shape `(batch, rows, cols, nheads, headdim)`, return the same shape. Inference-only
+kernels (no backward) are fine — the runner handles a `None` backward.
+
+**2. Re-export** in `tabular_attn/__init__.py`: add `col_attn_mybackend`,
+`row_attn_mybackend`, and `MYBACKEND_AVAILABLE` to the imports and `__all__`.
+
+**3. Register in the runner** (`run_benchmark.py`): add `fwd_bwd_col_attn_mybackend`
+and `fwd_bwd_row_attn_mybackend` wrappers (copy an existing pair — they build the
+`fwd`/`fwd_bwd` closures and pre-allocate `dout`), then add entries to both
+`fn_map_col` and `fn_map_row`. Return `(fwd, None)` for inference-only backends.
+
+**4. Dependency group** in `pyproject.toml`: add a `mybackend = [...]` group pinning
+its torch/CUDA build, register it in the `[tool.uv] conflicts` list (groups are
+mutually exclusive), and add any `[tool.uv.sources]` / index entries. If the kernel
+needs a compiled wheel, add a `build_mybackend.sh` + Makefile target under `build/`.
+
+**5. Makefile**: add a `test-mybackend` target and a `bench-mybackend` target
+(`uv sync --group mybackend --reinstall` then `$(call run_bench,mybackend,mybackend)`),
+and include `bench-mybackend` in the relevant `benchmark-*` aggregate(s).
+
+**6. Tests** (`tests/test_tabular_attn.py`): add parametrized fwd/bwd cases marked
+with the backend name (the marker is auto-registered from `--backend`, see
+`tests/conftest.py`).
+
+**To appear in plots**, add the backend to `BACKEND_LABELS`, `BACKEND_PALETTE`, and
+`LEGEND_LABEL_ORDER` at the top of `run_benchmark_plots.py` (backends absent from
+`BACKEND_LABELS` are silently skipped).
+
+Verify with `make test-mybackend`, then `make bench-mybackend` (resumable — it only
+computes shapes not already on disk).
 
 ## Trouble-Shooting
 ### Failed to generate package metadata

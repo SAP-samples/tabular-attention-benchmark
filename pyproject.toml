@@ -39,7 +39,9 @@ fa4_optim = [
 ]
 sage = [
     "torch==2.10",
-    # SageAttention 2++
+    # SageAttention built from commit d1a57a5 (fixes the sm90 fp8 kernel that was
+    # broken in the v2.2.0 release — see issue #288 / tabular_attn/sage.py). Built
+    # for sm90 only (wgmma is not valid for sm_100a).
     "sageattention",
 ]
 vllm = [
@@ -49,6 +51,37 @@ vllm = [
 ]
 dev = [
     "pytest>=9.0.2",
+]
+# End-to-end TabPFNv2.6 inference benchmark (e2e/run_e2e_benchmark.py).
+# One group per attention backend, each pinning the torch/CUDA its wheel needs
+# (mirrors the fa2/fa3/sage microbenchmark split). tabpfn requires only
+# torch>=2.5, so it is happy under both cu128/torch2.8 and cu130/torch2.10.
+#   e2e       -> SDPA modes (default/efficient/cudnn), no external kernel needed
+#   e2e_fa2   -> "our" FA2 wrapper (native (B,S,H,D) layout, no permute/KV-expand)
+#   e2e_fa3   -> "our" FA3 wrapper
+#   e2e_sage  -> SageAttention
+e2e = [
+    "tabpfn==7.1.1",
+    "torch==2.10",
+    "scikit-learn",
+]
+e2e_fa2 = [
+    "tabpfn==7.1.1",
+    "torch==2.8",
+    "scikit-learn",
+    "flash_attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl",
+]
+e2e_fa3 = [
+    "tabpfn==7.1.1",
+    "torch==2.10",
+    "scikit-learn",
+    "flash_attn_3",
+]
+e2e_sage = [
+    "tabpfn==7.1.1",
+    "torch==2.10",
+    "scikit-learn",
+    "sageattention",
 ]
 
 [build-system]
@@ -68,6 +101,10 @@ conflicts = [
         { group = "fa4_optim" },
         { group = "sage" },
         { group = "vllm" },
+        { group = "e2e" },
+        { group = "e2e_fa2" },
+        { group = "e2e_fa3" },
+        { group = "e2e_sage" },
     ],
 ]
 
@@ -90,6 +127,16 @@ torch = [
     { index = "pytorch-cu130", group = "fa4_optim" },
     { index = "pytorch-cu130", group = "sage" },
     { index = "pytorch-cu130", group = "vllm" },
+    { index = "pytorch-cu130", group = "e2e" },
+    { index = "pytorch-cu128", group = "e2e_fa2" },
+    { index = "pytorch-cu130", group = "e2e_fa3" },
+    { index = "pytorch-cu130", group = "e2e_sage" },
 ]
-flash_attn_3 = { path = "build/wheels/flash_attn_3-3.0.0+cu130-cp39-abi3-linux_x86_64.whl", group = "fa3" }
-sageattention = { path = "build/wheels/sageattention-2.2.0+cu130-cp312-cp312-linux_x86_64.whl", group = "sage" }
+flash_attn_3 = [
+    { path = "build/wheels/flash_attn_3-3.0.0+cu130-cp39-abi3-linux_x86_64.whl", group = "fa3" },
+    { path = "build/wheels/flash_attn_3-3.0.0+cu130-cp39-abi3-linux_x86_64.whl", group = "e2e_fa3" },
+]
+sageattention = [
+    { path = "build/wheels/sageattention-2.2.0+cu130-cp312-cp312-linux_x86_64.whl", group = "sage" },
+    { path = "build/wheels/sageattention-2.2.0+cu130-cp312-cp312-linux_x86_64.whl", group = "e2e_sage" },
+]

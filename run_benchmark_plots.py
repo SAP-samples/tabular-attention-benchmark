@@ -17,9 +17,36 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 import pandas as pd
+from matplotlib.ticker import FuncFormatter, LogLocator, ScalarFormatter
 
 
 sns.set_theme(style="whitegrid")
+
+
+def save_fig(output_path, fig=None, **savefig_kwargs):
+    """Save a figure to `output_path` AND a sibling with the other extension, so
+    every plot is written as both .pdf (for the paper) and .png (which refreshes
+    reliably in remote/IDE viewers, unlike overwritten PDFs). `fig` defaults to
+    the current pyplot figure.
+    """
+    from pathlib import Path as _Path
+    saver = (fig.savefig if fig is not None else plt.savefig)
+    p = _Path(output_path)
+    others = {".pdf": ".png", ".png": ".pdf"}
+    targets = [p] + ([p.with_suffix(others[p.suffix])] if p.suffix in others else [])
+    for t in targets:
+        saver(t, bbox_inches="tight", **savefig_kwargs)
+        print(f"Saved: {t}")
+
+
+def _gb_fmt(v, _pos=None):
+    """Y-axis label for GB: integers without a trailing .0 (1, 10, 100), and a
+    single decimal only for sub-1 values (0.5). Keeps both peak-mem panels
+    consistent regardless of their auto-detected range."""
+    if v <= 0:
+        return "0"
+    return f"{v:g}" if v >= 1 else f"{v:.1f}"
+
 
 matplotlib_color_theme = [
     "#1f77b4",  # blue
@@ -56,6 +83,11 @@ BACKEND_LABELS = {
     "fa2": "FA2",
     "fa3": "FA3",
     "fa4": "FA4",
+    "fa4_optim": "FA4 (optimized)",
+    # "fa4_tabular": "FA4_tabular",
+    # "sage": "Sage",
+    # "vllm": "vLLM",
+    # "optim": "combined optimal",
 }
 
 LEGEND_LABEL_ORDER = [
@@ -65,6 +97,11 @@ LEGEND_LABEL_ORDER = [
     "FA2",
     "FA3",
     "FA4",
+    "FA4 (optimized)",
+    "FA4_tabular",
+    "Sage",
+    "vLLM",
+    "combined optimal",
 ]
 
 
@@ -73,11 +110,23 @@ LEGEND_LABEL_ORDER = [
 # ============================================================
 
 GPU_SPECS = {
+    "NVIDIA_A100_80GB_PCIe": {
+        "peak_tflops": 312,
+        "hbm_bandwidth_tb": 2.0,
+        "copy_bandwidth_tb_fallback": 1.29,
+        "label": "A100 80GB PCIe",
+    },
     "NVIDIA_H100_NVL": {
         "peak_tflops": 1979,
         "hbm_bandwidth_tb": 3.9,
         "copy_bandwidth_tb_fallback": 1.35,
         "label": "H100 NVL",
+    },
+    "NVIDIA_B200": {
+        "peak_tflops": 4500,
+        "hbm_bandwidth_tb": 8.0,
+        "copy_bandwidth_tb_fallback": 1.35,
+        "label": "B200 NVL",
     },
 }
 
@@ -153,10 +202,10 @@ def load_roofline_backend_data(results_dir: Path, gpu: str, backend_key: str,
     if not dtype_dir.exists():
         return []
 
-    target_suffix = f"H-{nheads}_HD-{headdim}"
     all_results = []
     for path in sorted(dtype_dir.glob("*.json")):
-        if target_suffix not in path.name:
+        p = parse_result_filename(path.name)
+        if p is None or p["nheads"] != nheads or p["headdim"] != headdim or p["batch"] != 1:
             continue
         with open(path) as f:
             data = json.load(f)
@@ -233,7 +282,7 @@ def plot_roofline_analysis(
     ax.set_yscale("log", base=10)
     if col_seq_lens:
         ax.set_xticks(col_seq_lens)
-    ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+    ax.get_xaxis().set_major_formatter(FuncFormatter(_binary_k))
     ax.legend(fontsize=9, loc="lower right")
 
     # --- Right panel: Row attention copy decomposition ---
@@ -295,7 +344,7 @@ def plot_roofline_analysis(
     row_seq_lens = sorted(df_row["Seq Len"].unique())
     if row_seq_lens:
         ax.set_xticks(row_seq_lens)
-    ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+    ax.get_xaxis().set_major_formatter(FuncFormatter(_binary_k))
     ax.legend(fontsize=9, loc="lower right")
 
     fig.suptitle(
@@ -303,9 +352,8 @@ def plot_roofline_analysis(
         fontsize=13, y=1.02
     )
     plt.tight_layout()
-    plt.savefig(output_path, bbox_inches="tight")
+    save_fig(output_path)
     plt.close()
-    print(f"Saved: {output_path}")
 
 
 def plot_copy_overhead_fraction(
@@ -380,14 +428,13 @@ def plot_copy_overhead_fraction(
     ax.set_title(f"Row Attention: Copy Overhead Decomposition ({specs['label']})", fontsize=12)
     ax.set_xscale("log", base=2)
     ax.set_xticks(seq_lens)
-    ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+    ax.get_xaxis().set_major_formatter(FuncFormatter(_binary_k))
     ax.set_ylim(bottom=0)
     ax.legend(fontsize=9, loc="upper right")
 
     plt.tight_layout()
-    plt.savefig(output_path, bbox_inches="tight")
+    save_fig(output_path)
     plt.close()
-    print(f"Saved: {output_path}")
 
 
 # ============================================================
@@ -426,6 +473,7 @@ def results_to_dataframe(results: list[dict]) -> pd.DataFrame:
             "Backward TFLOPS Std": r.get("bwd_tflops_std", 0),
             "Forward Time (ms)": r.get("fwd_time_ms", 0),
             "Backward Time (ms)": r.get("bwd_time_ms", 0),
+            "Peak Mem (GB)": r.get("peak_mem_gb", None),
         })
     return pd.DataFrame(rows)
 
@@ -464,7 +512,8 @@ def plot_tabular_benchmark(df: pd.DataFrame, output_path: Path, metadata: dict):
         ax.set_xscale("log", base=2)
         if len(df_col) > 0:
             ax.set_xticks(sorted(df_col["Seq Len"].unique()))
-        ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+        ax.get_xaxis().set_major_formatter(FuncFormatter(_binary_k))
+        ax.tick_params(axis="x", labelrotation=45)
         handles, labels = ax.get_legend_handles_labels()
         label_to_handle = {l: h for h, l in zip(handles, labels) if isinstance(h, plt.Line2D)}
         ordered_handles = [label_to_handle[l] for l in LEGEND_LABEL_ORDER if l in label_to_handle]
@@ -494,7 +543,8 @@ def plot_tabular_benchmark(df: pd.DataFrame, output_path: Path, metadata: dict):
         ax.set_xscale("log", base=2)
         if len(df_row) > 0:
             ax.set_xticks(sorted(df_row["Seq Len"].unique()))
-        ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+        ax.get_xaxis().set_major_formatter(FuncFormatter(_binary_k))
+        ax.tick_params(axis="x", labelrotation=45)
         handles, labels = ax.get_legend_handles_labels()
         label_to_handle = {l: h for h, l in zip(handles, labels) if isinstance(h, plt.Line2D)}
         ordered_handles = [label_to_handle[l] for l in LEGEND_LABEL_ORDER if l in label_to_handle]
@@ -510,9 +560,71 @@ def plot_tabular_benchmark(df: pd.DataFrame, output_path: Path, metadata: dict):
     fig.text(0.5, -0.01, subtitle, ha="center", fontsize=10, color="gray")
 
     plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    save_fig(output_path, dpi=150)
     plt.close()
-    print(f"Saved: {output_path}")
+
+
+def plot_peak_memory(df: pd.DataFrame, output_path: Path, metadata: dict):
+    """Create a 1x2 grid (Col attn, Row attn) of peak GPU memory vs sequence
+    length, one line per backend — the memory analogue of the TFLOPS plots.
+
+    Peak memory is a single value per shape (fwd+bwd run), so there is no
+    Fwd/Bwd split as in the TFLOPS grid.
+    """
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    panels = [
+        (axes[0], df[df["Attention Type"] == "Col"], "cols", "Rows", "R", "Column"),
+        (axes[1], df[df["Attention Type"] == "Row"], "rows", "Cols", "C", "Row"),
+    ]
+    for ax, dsub, seq_name, fixed_col, fixed_sym, title_word in panels:
+        plot_data = dsub.dropna(subset=["Peak Mem (GB)"])
+        for backend in plot_data["Backend"].unique():
+            bd = plot_data[plot_data["Backend"] == backend].sort_values("Seq Len")
+            if bd.empty:
+                continue
+            color = BACKEND_PALETTE.get(backend, None)
+            is_optimal = backend == "combined optimal"
+            plot_kwargs = ({"marker": "X", "linestyle": "--", "linewidth": 2, "markersize": 8, "zorder": 1000}
+                           if is_optimal else {"marker": "o", "linestyle": "-", "linewidth": 2, "markersize": 8})
+            ax.plot(bd["Seq Len"], bd["Peak Mem (GB)"], label=backend, color=color, **plot_kwargs)
+        fixed_val = dsub[fixed_col].iloc[0] if len(dsub) > 0 else "?"
+        ax.set_xlabel(f"Sequence Length ({seq_name})", fontsize=11)
+        ax.set_ylabel("Peak Memory (GB)", fontsize=11)
+        ax.set_title(f"{title_word} Attention – Peak Memory ({fixed_sym}={fixed_val})", fontsize=13)
+        ax.set_xscale("log", base=2)
+        ax.set_yscale("log", base=10)
+        # Minor gridlines at the 2..9 subdivisions of each decade so values
+        # between powers of ten (e.g. ~60 GB) are readable. Major ticks get
+        # plain-number labels; minor ticks are unlabelled (gridlines only) to
+        # avoid clutter/overlap below 1 GB.
+        ax.yaxis.set_major_locator(LogLocator(base=10))
+        ax.yaxis.set_minor_locator(LogLocator(base=10, subs=tuple(range(2, 10)), numticks=100))
+        ax.yaxis.set_major_formatter(FuncFormatter(_gb_fmt))
+        ax.yaxis.set_minor_formatter(plt.NullFormatter())
+        ax.grid(True, which="major", axis="y", alpha=0.6)
+        ax.grid(True, which="minor", axis="y", alpha=0.25)
+        seqlens = sorted(dsub["Seq Len"].unique())
+        if seqlens:
+            ax.set_xticks(seqlens)
+        ax.get_xaxis().set_major_formatter(FuncFormatter(_binary_k))
+        ax.tick_params(axis="x", labelrotation=45)
+        handles, labels = ax.get_legend_handles_labels()
+        label_to_handle = {l: h for h, l in zip(handles, labels) if isinstance(h, plt.Line2D)}
+        ordered_handles = [label_to_handle[l] for l in LEGEND_LABEL_ORDER if l in label_to_handle]
+        ordered_labels = [l for l in LEGEND_LABEL_ORDER if l in label_to_handle]
+        ax.legend(ordered_handles, ordered_labels, title="Backend", fontsize=9)
+
+    fig.suptitle("Tabular Attention – Peak GPU Memory", fontsize=16, y=1.01)
+    subtitle = (
+        f"GPU: {metadata.get('gpu', 'Unknown')}"
+        f" | dtype: {metadata.get('dtype', '?')} | nheads: {metadata.get('nheads', '?')} | headdim: {metadata.get('headdim', '?')}"
+    )
+    fig.text(0.5, -0.01, subtitle, ha="center", fontsize=10, color="gray")
+
+    plt.tight_layout()
+    save_fig(output_path, dpi=150)
+    plt.close()
 
 
 def plot_speedup(df: pd.DataFrame, output_path: Path, metadata: dict):
@@ -593,7 +705,8 @@ def plot_speedup(df: pd.DataFrame, output_path: Path, metadata: dict):
             ax.set_title(f"{attn_type} Attention – {label}{strided}", fontsize=13)
             ax.set_xscale("log", base=2)
             ax.set_xticks(sorted(df_attn["Seq Len"].unique()))
-            ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+            ax.get_xaxis().set_major_formatter(FuncFormatter(_binary_k))
+            ax.tick_params(axis="x", labelrotation=45)
             handles, labels = ax.get_legend_handles_labels()
             label_to_handle = {l: h for h, l in zip(handles, labels) if isinstance(h, plt.Line2D)}
             ordered_handles = [label_to_handle[l] for l in LEGEND_LABEL_ORDER if l in label_to_handle]
@@ -608,9 +721,8 @@ def plot_speedup(df: pd.DataFrame, output_path: Path, metadata: dict):
     fig.text(0.5, -0.01, subtitle, ha="center", fontsize=10, color="gray")
 
     plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    save_fig(output_path, dpi=150)
     plt.close()
-    print(f"Saved: {output_path}")
 
 
 INFERENCE_BACKEND_LABELS = {
@@ -652,7 +764,7 @@ def plot_inference(df: pd.DataFrame, output_path: Path, metadata: dict):
     ax.set_xscale("log", base=2)
     if len(df_col) > 0:
         ax.set_xticks(sorted(df_col["Seq Len"].unique()))
-    ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+    ax.get_xaxis().set_major_formatter(FuncFormatter(_binary_k))
     handles, labels = ax.get_legend_handles_labels()
     label_to_handle = {l: h for h, l in zip(handles, labels) if isinstance(h, plt.Line2D)}
     ordered_handles = [label_to_handle[l] for l in LEGEND_LABEL_ORDER if l in label_to_handle]
@@ -678,7 +790,7 @@ def plot_inference(df: pd.DataFrame, output_path: Path, metadata: dict):
     ax.set_xscale("log", base=2)
     if len(df_row) > 0:
         ax.set_xticks(sorted(df_row["Seq Len"].unique()))
-    ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+    ax.get_xaxis().set_major_formatter(FuncFormatter(_binary_k))
     handles, labels = ax.get_legend_handles_labels()
     label_to_handle = {l: h for h, l in zip(handles, labels) if isinstance(h, plt.Line2D)}
     ordered_handles = [label_to_handle[l] for l in LEGEND_LABEL_ORDER if l in label_to_handle]
@@ -686,9 +798,8 @@ def plot_inference(df: pd.DataFrame, output_path: Path, metadata: dict):
     ax.legend(ordered_handles, ordered_labels, title="Backend", fontsize=9)
 
     plt.tight_layout()
-    plt.savefig(output_path, bbox_inches="tight")
+    save_fig(output_path)
     plt.close()
-    print(f"Saved: {output_path}")
 
 
 # Shade palette for headdim ablation: light to dark for increasing D
@@ -749,16 +860,24 @@ def plot_headdim_ablation(headdim_data: dict[int, pd.DataFrame], output_path: Pa
             ax.fill_between(seq_lens, speedups - speedup_stds, speedups + speedup_stds,
                             alpha=0.15, color=color)
     ax.axhline(y=1.0, color="gray", linestyle="--", alpha=0.7)
-    col_rows_val = next(iter(headdim_data.values()))
-    df_col_any = col_rows_val[col_rows_val["Attention Type"] == "Col"]
+    # Rows (R=) is fixed for col attention; take it from any headdim's data.
+    df_col_any = next(iter(headdim_data.values()))
+    df_col_any = df_col_any[df_col_any["Attention Type"] == "Col"]
     col_rows_val = df_col_any["Rows"].iloc[0] if len(df_col_any) > 0 else "?"
     ax.set_xlabel("Sequence Length (cols)", fontsize=11)
     ax.set_ylabel("Speedup (FA3 / cuDNN)", fontsize=11)
     ax.set_title(f"Column Attention – Forward (R={col_rows_val})", fontsize=12)
     ax.set_xscale("log", base=2)
-    if len(df_col_any) > 0:
-        ax.set_xticks(sorted(df_col_any["Seq Len"].unique()))
-    ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+    # Ticks from the UNION of seqlens across all headdims (headdims reach
+    # different max seqlens — e.g. D=16/32 go to 131072, D=128 only to 32768).
+    col_seqlens = sorted({sl for df in headdim_data.values()
+                          for sl in df[df["Attention Type"] == "Col"]["Seq Len"].unique()})
+    if col_seqlens:
+        ax.set_xticks(col_seqlens)
+        ax.set_xlim(min(col_seqlens) * 0.9, max(col_seqlens) * 1.1)
+    ax.get_xaxis().set_major_formatter(FuncFormatter(_binary_k))
+    ax.tick_params(axis="x", labelrotation=45)
+    ax.grid(True, which="major", axis="x")
     ax.legend(fontsize=9, title="Head dim")
 
     # Row attention forward speedup
@@ -807,26 +926,25 @@ def plot_headdim_ablation(headdim_data: dict[int, pd.DataFrame], output_path: Pa
     ax.set_ylabel("Speedup (FA3 / cuDNN)", fontsize=11)
     ax.set_title(f"Row Attention – Forward (C={row_cols_val})", fontsize=12)
     ax.set_xscale("log", base=2)
-    if len(df_row_any) > 0:
-        ax.set_xticks(sorted(df_row_any["Seq Len"].unique()))
-    ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+    # Ticks from the UNION of seqlens across all headdims (see col panel note).
+    row_seqlens = sorted({sl for df in headdim_data.values()
+                          for sl in df[df["Attention Type"] == "Row"]["Seq Len"].unique()})
+    if row_seqlens:
+        ax.set_xticks(row_seqlens)
+        ax.set_xlim(min(row_seqlens) * 0.9, max(row_seqlens) * 1.1)
+    ax.get_xaxis().set_major_formatter(FuncFormatter(_binary_k))
+    ax.tick_params(axis="x", labelrotation=45)
+    ax.grid(True, which="major", axis="x")
     ax.legend(fontsize=9, title="Head dim")
 
     plt.tight_layout()
-    plt.savefig(output_path, bbox_inches="tight")
+    save_fig(output_path)
     plt.close()
-    print(f"Saved: {output_path}")
 
 
-AGENT_OPTIM_FILE_PATTERN = (
-    "CA-1024_16-32-64-128-256-512-1024-2048__RA-64_32-64-128-256-512-1024-2048-4096-8192__H-12_HD-64.json"
-)
-AGENT_OPTIM_BASELINE_PATTERN = (
-    "CA-1024_16-32-64-128-256-512-1024-2048__RA-64_32-64-128-256-512-1024-2048-4096-8192-16384__H-12_HD-64_col.json"
-)
-AGENT_OPTIM_CUDNN_PATTERN = (
-    "CA-1024_16-32-64-128-256-512-1024-2048__RA-64_32-64-128-256-512-1024-2048-4096-8192-16384__H-12_HD-64_col.json"
-)
+AGENT_OPTIM_FILE_PATTERN = "H-12_HD-64_col.json"
+AGENT_OPTIM_BASELINE_PATTERN = "H-12_HD-64_col.json"
+AGENT_OPTIM_CUDNN_PATTERN = "H-12_HD-64_col.json"
 
 
 def plot_agent_optimized(df: pd.DataFrame, output_path: Path, metadata: dict):
@@ -852,7 +970,7 @@ def plot_agent_optimized(df: pd.DataFrame, output_path: Path, metadata: dict):
     ax.set_xscale("log", base=2)
     if len(df_col) > 0:
         ax.set_xticks(sorted(df_col["Seq Len"].unique()))
-    ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+    ax.get_xaxis().set_major_formatter(FuncFormatter(_binary_k))
     handles, labels = ax.get_legend_handles_labels()
     label_to_handle = {l: h for h, l in zip(handles, labels) if isinstance(h, plt.Line2D)}
     ordered_handles = [label_to_handle[l] for l in LEGEND_LABEL_ORDER if l in label_to_handle]
@@ -860,9 +978,8 @@ def plot_agent_optimized(df: pd.DataFrame, output_path: Path, metadata: dict):
     ax.legend(ordered_handles, ordered_labels, title="Backend", fontsize=9)
 
     plt.tight_layout()
-    plt.savefig(output_path, bbox_inches="tight")
+    save_fig(output_path)
     plt.close()
-    print(f"Saved: {output_path}")
 
 
 GPU_ORDER = [
@@ -919,7 +1036,7 @@ def plot_comparison(gpu_dataframes: dict[str, pd.DataFrame], output_dir: Path, m
         ax.set_xscale("log", base=2)
         if len(df_col) > 0:
             ax.set_xticks(sorted(df_col["Seq Len"].unique()))
-        ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+        ax.get_xaxis().set_major_formatter(FuncFormatter(_binary_k))
         handles, labels = ax.get_legend_handles_labels()
         label_to_handle = {l: h for h, l in zip(handles, labels) if isinstance(h, plt.Line2D)}
         ordered_handles = [label_to_handle[l] for l in LEGEND_LABEL_ORDER if l in label_to_handle]
@@ -945,7 +1062,7 @@ def plot_comparison(gpu_dataframes: dict[str, pd.DataFrame], output_dir: Path, m
         ax.set_xscale("log", base=2)
         if len(df_row) > 0:
             ax.set_xticks(sorted(df_row["Seq Len"].unique()))
-        ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+        ax.get_xaxis().set_major_formatter(FuncFormatter(_binary_k))
         handles, labels = ax.get_legend_handles_labels()
         label_to_handle = {l: h for h, l in zip(handles, labels) if isinstance(h, plt.Line2D)}
         ordered_handles = [label_to_handle[l] for l in LEGEND_LABEL_ORDER if l in label_to_handle]
@@ -954,9 +1071,8 @@ def plot_comparison(gpu_dataframes: dict[str, pd.DataFrame], output_dir: Path, m
 
         plt.tight_layout()
         output_file = output_dir / f"gpu_comparison_{gpu_key}_H-{nheads}_HD-{headdim}.pdf"
-        plt.savefig(output_file, bbox_inches="tight")
+        save_fig(output_file)
         plt.close()
-        print(f"Saved: {output_file}")
 
 
 import re
@@ -968,6 +1084,112 @@ def _strip_direction_suffix(filename: str) -> str:
     e.g. 'CA-1024_...HD-64_col.json' -> 'CA-1024_...HD-64.json'
     """
     return re.sub(r"_(col|row)\.json$", ".json", filename)
+
+
+# Matches both filename formats, since both end in the same tail:
+#   old (B200):   CA-..._RA-..._H-{n}_HD-{d}[_B{b}][_col|_row].json
+#   new (A100/H100): H-{n}_HD-{d}[_B{b}][_col|_row].json
+# The leading CA-.../RA-... prefix (if any) is ignored. Batch tag defaults to 1.
+_RESULT_RE = re.compile(
+    r"H-(?P<nheads>\d+)_HD-(?P<headdim>\d+)"
+    r"(?:_B(?P<batch>\d+))?"
+    r"(?:_(?P<direction>col|row))?"
+    r"\.json$"
+)
+
+
+def parse_result_filename(name: str):
+    """Parse a result filename into {nheads, headdim, batch, direction}.
+
+    Returns None for names that don't encode a benchmark config (e.g.
+    copy_bandwidth.json). `batch` is 1 when no _B{n} tag is present; `direction`
+    is None for combined (unsuffixed) files.
+    """
+    m = _RESULT_RE.search(name)
+    if not m:
+        return None
+    return {
+        "nheads": int(m.group("nheads")),
+        "headdim": int(m.group("headdim")),
+        "batch": int(m.group("batch")) if m.group("batch") else 1,
+        "direction": m.group("direction"),
+    }
+
+
+def _binary_k(v, _pos=None):
+    """Axis label: 128, 256, 512, 1k, 2k, ... using binary-k (1024 -> 1k)."""
+    v = int(round(v))
+    if v >= 1024:
+        k = v / 1024
+        return f"{int(k)}k" if k == int(k) else f"{k:g}k"
+    return str(v)
+
+
+# Distinct color per batch size (sequential: bigger B = darker).
+_BATCH_COLOR = {1: "#9ecae1", 2: "#4292c6", 4: "#2171b5", 8: "#084594"}
+_BATCH_MARKER = {1: "o", 2: "s", 4: "^", 8: "D"}
+
+
+def plot_batch_sweep(results_dir, gpu, backend, nheads, headdim, output_dir):
+    """Forward TFLOPS vs sequence length, one line per batch size, col + row.
+
+    Reads all files for (gpu, backend, nheads, headdim) across batch sizes (B=1
+    baseline has no _B tag) and overlays them — a visual check that throughput is
+    governed by seqlen, not batch. Handles both filename formats via the parser.
+    """
+    from collections import defaultdict
+    from matplotlib.ticker import FuncFormatter
+
+    backend_dir = Path(results_dir) / gpu / "bfloat16" / backend
+    if not backend_dir.exists():
+        print(f"No results dir for {gpu}/{backend}")
+        return
+
+    data = {"col": defaultdict(list), "row": defaultdict(list)}
+    for path in sorted(backend_dir.glob("*.json")):
+        p = parse_result_filename(path.name)
+        if p is None or p["nheads"] != nheads or p["headdim"] != headdim or p["direction"] is None:
+            continue
+        d = json.load(open(path))
+        for r in d.get("results", []):
+            if "fwd_tflops" in r:
+                data[p["direction"]][p["batch"]].append((r["seq_len"], r["fwd_tflops"]))
+    for direction in data:
+        for b in data[direction]:
+            data[direction][b].sort()
+
+    if not any(data[d] for d in data):
+        print(f"No batch-sweep data for {gpu}/{backend} H-{nheads}_HD-{headdim}")
+        return
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    for ax, direction in zip(axes, ["col", "row"]):
+        seqlens = set()
+        for b in sorted(data[direction]):
+            pts = data[direction][b]
+            if not pts:
+                continue
+            xs = [x for x, _ in pts]
+            ys = [y for _, y in pts]
+            seqlens.update(xs)
+            ax.plot(xs, ys, marker=_BATCH_MARKER.get(b, "o"), linewidth=2, markersize=7,
+                    color=_BATCH_COLOR.get(b, "#555555"), label=f"B={b}")
+        ax.set_xscale("log", base=2)
+        if seqlens:
+            ax.set_xticks(sorted(seqlens))
+            ax.get_xaxis().set_major_formatter(FuncFormatter(_binary_k))
+        ax.set_xlabel(f"sequence length ({'cols' if direction == 'col' else 'rows'})")
+        ax.set_ylabel("forward TFLOPS")
+        ax.set_title(f"{direction} attention")
+        ax.legend(frameon=False, title="batch size")
+    fig.suptitle(f"Batch-size sweep — {gpu.replace('_', ' ')} / {backend}  "
+                 f"(hd={headdim}, nh={nheads})", fontsize=14, y=1.0)
+    fig.tight_layout()
+
+    out = Path(output_dir) / f"batch_sweep_{gpu}_{backend}_H{nheads}_HD{headdim}.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    save_fig(out, fig=fig, dpi=150)
+    plt.close(fig)
 
 
 def collect_groups(results_dir: Path) -> dict[tuple, list[Path]]:
@@ -988,6 +1210,13 @@ def collect_groups(results_dir: Path) -> dict[tuple, list[Path]]:
     for path in sorted(results_dir.rglob("*.json")):
         # Expected depth relative to results_dir: gpu/dtype/backend/filename
         parts = path.relative_to(results_dir).parts
+        # The e2e/ and tabarena/ subtrees use a different schema (latency /
+        # per-task, no `backend` key) and have their own plotting paths
+        # (run_e2e_plots.py, run_tabarena_plots.py) — skip them here. Note
+        # tabarena/{GPU}/{variant}/tabarena_benchmark.json is also exactly 4
+        # parts deep, so the len check below would not catch it.
+        if parts and parts[0] in ("e2e", "tabarena"):
+            continue
         if len(parts) != 4:
             print(f"Skipping unexpected path structure: {path}")
             continue
@@ -1026,10 +1255,15 @@ def main():
                              "copy overhead fraction). Uses --gpu, --nheads, --headdim, "
                              "and --copy-benchmark.")
     parser.add_argument("--gpu", type=str, default="NVIDIA_H100_NVL",
-                        help="GPU for --roofline (default: NVIDIA_H100_NVL)")
+                        help="GPU for --roofline / --batch-sweep (default: NVIDIA_H100_NVL)")
     parser.add_argument("--copy-benchmark", type=str, default=None,
                         help="Path to copy_bandwidth.json for --roofline. "
                              "If not provided, uses a fallback constant bandwidth.")
+    parser.add_argument("--batch-sweep", action="store_true",
+                        help="Plot the batch-size sweep (forward TFLOPS vs seqlen, one line "
+                             "per batch) for --gpu/--backend/--nheads/--headdim.")
+    parser.add_argument("--backend", type=str, default="sdpa_cudnn",
+                        help="Backend for --batch-sweep (default: sdpa_cudnn)")
     args = parser.parse_args()
 
     results_dir = Path(args.results_dir)
@@ -1037,6 +1271,12 @@ def main():
 
     if not results_dir.exists():
         print(f"Results directory not found: {results_dir}")
+        return
+
+    if args.batch_sweep:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        plot_batch_sweep(results_dir, args.gpu, args.backend,
+                         args.nheads, args.headdim, output_dir)
         return
 
     groups = collect_groups(results_dir)
@@ -1052,10 +1292,13 @@ def main():
         metadata = {}
 
         for (gpu, dtype, filename), paths in groups.items():
-            if target_suffix not in filename:
+            p = parse_result_filename(filename)
+            if p is None or p["nheads"] != args.nheads or p["headdim"] != args.headdim or p["batch"] != 1:
                 continue
             all_results = []
             for path in paths:
+                if path.parent.name == "fa4_optim":
+                    continue
                 data = load_results(path)
                 all_results.extend(data.get("results", []))
                 if not metadata:
@@ -1081,7 +1324,10 @@ def main():
         metadata = {}
 
         for (gpu, dtype, filename), paths in groups.items():
-            if gpu != target_gpu or target_suffix not in filename:
+            p = parse_result_filename(filename)
+            if (gpu != target_gpu or p is None
+                    or p["nheads"] != args.nheads or p["headdim"] != args.headdim
+                    or p["batch"] != 1):
                 continue
             for path in paths:
                 data = load_results(path)
@@ -1135,14 +1381,10 @@ def main():
         for (gpu, dtype, filename), paths in groups.items():
             if gpu != target_gpu:
                 continue
-            if f"H-{args.nheads}_HD-" not in filename:
+            p = parse_result_filename(filename)
+            if p is None or p["nheads"] != args.nheads or p["batch"] != 1:
                 continue
-            # Extract headdim from filename
-            import re as _re
-            hd_match = _re.search(r"HD-(\d+)", filename)
-            if not hd_match:
-                continue
-            hd = int(hd_match.group(1))
+            hd = p["headdim"]
 
             all_results = []
             for path in paths:
@@ -1259,10 +1501,19 @@ def main():
         return
 
     for (gpu, dtype, filename), paths in groups.items():
-        # Merge results from all backends in this group
+        # Skip batch-sweep groups (B>1) — those are plotted by --batch-sweep, not
+        # the standard paper plots.
+        parsed = parse_result_filename(filename)
+        if parsed is not None and parsed["batch"] != 1:
+            continue
+        # Merge results from all backends in this group. fa4_optim is excluded
+        # from the standard plots — it only appears in the dedicated
+        # --agent-optimized plot.
         all_results = []
         metadata = {}
         for path in paths:
+            if path.parent.name == "fa4_optim":
+                continue
             data = load_results(path)
             all_results.extend(data.get("results", []))
             if not metadata:
@@ -1280,6 +1531,8 @@ def main():
 
         plot_tabular_benchmark(df, out_subdir / f"{stem}_combined.png", metadata)
         plot_speedup(df, out_subdir / f"{stem}_speedup.png", metadata)
+        if df["Peak Mem (GB)"].notna().any():
+            plot_peak_memory(df, out_subdir / f"{stem}_peakmem.png", metadata)
 
 
 if __name__ == "__main__":

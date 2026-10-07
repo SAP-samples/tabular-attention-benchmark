@@ -12,6 +12,7 @@ but FA3/FA4 can operate on strided tensors directly.
 Usage:
     uv run python benchmarks/benchmark_tabular_attn.py
 """
+from __future__ import annotations
 
 import argparse
 import json
@@ -21,6 +22,33 @@ from typing import Callable
 
 import numpy as np
 import torch
+
+import sweeps
+
+
+def _shape_key(record: dict):
+    """Identity of a benchmarked shape within one result file."""
+    return (record.get("backend"), record.get("attn_type"),
+            record.get("batch", 1), record.get("rows"), record.get("cols"))
+
+
+def load_existing(path: "Path"):
+    """Load an existing result file. Returns (metadata, {key: record}).
+
+    Only SUCCESSFUL records (no 'error', non-null fwd_time_ms) are indexed as
+    completed — error records are dropped so they get retried on the next run.
+    """
+    if not path.exists():
+        return None, {}
+    with open(path) as f:
+        data = json.load(f)
+    completed = {}
+    for r in data.get("results", []):
+        if "error" in r or r.get("fwd_time_ms") is None:
+            continue
+        completed[_shape_key(r)] = r
+    return data.get("metadata"), completed
+
 from triton import runtime
 from tqdm import tqdm
 
@@ -32,6 +60,9 @@ from tabular_attn import (
     col_attn_fa2_kv_packed,
     col_attn_fa3,
     col_attn_fa4,
+    col_attn_fa4_optim,
+    col_attn_sage,
+    col_attn_vllm,
     row_attn_sdpa_math,
     row_attn_sdpa_efficient,
     row_attn_sdpa_cudnn,
@@ -39,6 +70,9 @@ from tabular_attn import (
     row_attn_fa2_kv_packed,
     row_attn_fa3,
     row_attn_fa4,
+    row_attn_fa4_optim,
+    row_attn_sage,
+    row_attn_vllm,
 )
 
 
@@ -59,7 +93,7 @@ def get_env_info() -> dict[str, str]:
     return info
 
 
-def flops(batch_eff: int, nheads: int, seqlen: int, headdim: int, causal: bool = False):
+def flops(batch_eff, nheads, seqlen, headdim, causal=False):
     """Calculate FLOPs for attention."""
     if causal:
         avg_seqlen = (seqlen + 1) / 2
@@ -68,7 +102,7 @@ def flops(batch_eff: int, nheads: int, seqlen: int, headdim: int, causal: bool =
     return 4 * batch_eff * nheads * seqlen * avg_seqlen * headdim
 
 
-def do_bench_fixed_reps(fn, warmup: int = 5, rep: int= 100, grad_to_none=None):
+def do_bench_fixed_reps(fn, warmup=5, rep=100, grad_to_none=None):
     """Benchmark with fixed number of repetitions (not fixed time).
 
     Based on triton.testing.do_bench but uses rep as actual repetition count
@@ -183,7 +217,10 @@ def fwd_bwd_col_attn_sdpa_cudnn(q, k, v, causal=False):
 
 
 def fwd_bwd_col_attn_fa2(q, k, v, causal=False):
-    """Column attention using FlashAttention-2."""
+    """Column attention using FlashAttention-2.
+
+    FA2 requires contiguous tensors, similar to SDPA.
+    """
     dout = torch.randn_like(q)
 
     def fwd():
@@ -197,7 +234,10 @@ def fwd_bwd_col_attn_fa2(q, k, v, causal=False):
 
 
 def fwd_bwd_col_attn_fa2_packed(q, kv, causal=False):
-    """Column attention using FlashAttention-2 in kv packed variant."""
+    """Column attention using FlashAttention-2 in kv packed variant.
+
+    FA2 requires contiguous tensors, similar to SDPA.
+    """
     dout = torch.randn_like(q)
 
     def fwd():
@@ -233,6 +273,20 @@ def fwd_bwd_col_attn_fa4(q, k, v, causal=False):
 
     def fwd_bwd():
         out = col_attn_fa4(q, k, v, causal=causal)
+        out.backward(dout)
+
+    return fwd, fwd_bwd
+
+
+def fwd_bwd_col_attn_fa4_optim(q, k, v, causal=False):
+    """Column attention using the optimized local FlashAttention-4 kernel."""
+    dout = torch.randn_like(q)
+
+    def fwd():
+        return col_attn_fa4_optim(q, k, v, causal=causal)
+
+    def fwd_bwd():
+        out = col_attn_fa4_optim(q, k, v, causal=causal)
         out.backward(dout)
 
     return fwd, fwd_bwd
@@ -358,6 +412,20 @@ def fwd_bwd_row_attn_fa4(q, k, v, causal=False):
     return fwd, fwd_bwd
 
 
+def fwd_bwd_row_attn_fa4_optim(q, k, v, causal=False):
+    """Row attention using the optimized local FlashAttention-4 kernel."""
+    dout = torch.randn_like(q)
+
+    def fwd():
+        return row_attn_fa4_optim(q, k, v, causal=causal)
+
+    def fwd_bwd():
+        out = row_attn_fa4_optim(q, k, v, causal=causal)
+        out.backward(dout)
+
+    return fwd, fwd_bwd
+
+
 def fwd_bwd_row_attn_sage(q, k, v, causal=False):
     """Row attention using SageAttention."""
     def fwd():
@@ -374,7 +442,6 @@ def fwd_bwd_row_attn_vllm(q, k, v, causal=False):
     return fwd, None
 
 
-
 def run_benchmarks(
         col_attn_rows: int,
         col_attn_cols: list[int],
@@ -385,10 +452,13 @@ def run_benchmarks(
         dtype: torch.dtype,
         causal: bool,
         warmup: int,
-        rep: int,
+        rep_override: int | None,
         backends: list[str],
-        flush_file: "Path | None" = None,
+        batch: int = 1,
+        flush_file: Path | None = None,
         metadata: dict | None = None,
+        completed: dict | None = None,
+        force: bool = False,
 ) -> list[dict]:
     """Run tabular attention benchmarks.
 
@@ -396,33 +466,65 @@ def run_benchmarks(
     Row attention: fixed cols, varying rows (seq_len=rows, batch_eff=cols)
     """
     device = "cuda"
-    batch = 1  # Fixed batch size for tabular models
-    results = []
+    # `batch` is a benchmark axis (default 1). It folds into batch_eff = batch*rows
+    # (col) / batch*cols (row) via a view() before the kernel, so B>1 is equivalent
+    # to a larger rows/cols at B=1 — the batch sweep validates that invariance.
+
+    # Retained successful records from a prior run; new results are merged into
+    # this list so every flush writes the union (a crash never loses old shapes).
+    completed = completed or {}
+    if force:
+        completed = {}
+    results = list(completed.values())
 
     # Warmup GPU to stabilize clocks
     gpu_warmup()
 
-    # Build list of all (attn_type, rows, cols, backend) combinations
+    # Build list of all (attn_type, rows, cols, backend) combinations, skipping
+    # shapes already measured successfully (unless --force cleared `completed`).
+    # Shape keys include `batch` so a B>1 run never collides with B=1 records.
     tasks = []
+    skipped = 0
     for cols in col_attn_cols:
         for backend in backends:
+            key = (backend, "col", batch, col_attn_rows, cols)
+            if key in completed:
+                skipped += 1
+                continue
             tasks.append(("col", col_attn_rows, cols, backend))
     for rows in row_attn_rows:
         for backend in backends:
+            key = (backend, "row", batch, rows, row_attn_cols)
+            if key in completed:
+                skipped += 1
+                continue
             tasks.append(("row", rows, row_attn_cols, backend))
+
+    if skipped:
+        tqdm.write(f"Skipping {skipped} shape(s) already measured (use --force to recompute).")
+    if not tasks:
+        tqdm.write("Nothing to do — all requested shapes already present.")
+        return results
 
     pbar = tqdm(tasks, desc="Benchmarking", unit="bench",
                 bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]")
 
     prev_key = None
     for attn_type, rows, cols, backend in pbar:
-        pbar.set_postfix_str(f"{attn_type} r={rows} c={cols} {backend}")
+        direction = "COL" if attn_type == "col" else "ROW"
+        pbar.set_description(f"{direction} attn hd={headdim} nh={nheads} {backend}")
+        pbar.set_postfix_str(f"r={rows} c={cols} (seq_len={cols if attn_type=='col' else rows})")
 
         if attn_type == "col":
             fwd_flops = flops(batch * rows, nheads, cols, headdim, causal)
         else:
             fwd_flops = flops(batch * cols, nheads, rows, headdim, causal)
         bwd_flops = 2.5 * fwd_flops
+
+        # Per-shape repetition count: many reps for small/fast shapes, few for
+        # huge/slow ones. --rep (rep_override) forces a fixed count if given.
+        seqlen = cols if attn_type == "col" else rows
+        rep = rep_override if rep_override is not None else sweeps.reps_for_seqlen(seqlen)
 
         try:
             # Recreate tensors when shape changes
@@ -442,6 +544,7 @@ def run_benchmarks(
                 "fa2_kv_packed": lambda: fwd_bwd_col_attn_fa2_packed(q, kv, causal),
                 "fa3": lambda: fwd_bwd_col_attn_fa3(q, k, v, causal),
                 "fa4": lambda: fwd_bwd_col_attn_fa4(q, k, v, causal),
+                "fa4_optim": lambda: fwd_bwd_col_attn_fa4_optim(q, k, v, causal),
                 "sage": lambda: fwd_bwd_col_attn_sage(q, k, v, causal),
                 "vllm": lambda: fwd_bwd_col_attn_vllm(q, k, v, causal),
             }
@@ -453,6 +556,7 @@ def run_benchmarks(
                 "fa2_kv_packed": lambda: fwd_bwd_row_attn_fa2_packed(q, kv, causal),
                 "fa3": lambda: fwd_bwd_row_attn_fa3(q, k, v, causal),
                 "fa4": lambda: fwd_bwd_row_attn_fa4(q, k, v, causal),
+                "fa4_optim": lambda: fwd_bwd_row_attn_fa4_optim(q, k, v, causal),
                 "sage": lambda: fwd_bwd_row_attn_sage(q, k, v, causal),
                 "vllm": lambda: fwd_bwd_row_attn_vllm(q, k, v, causal),
             }
@@ -462,6 +566,11 @@ def run_benchmarks(
                 raise ValueError(f"Unknown backend {backend}")
             fwd_fn, fwd_bwd_fn = fn_map[backend]()
 
+            # Reset peak stat so the reading below reflects this backend's run.
+            # Inputs (Q/K/V/kv + grads) are already resident, so peak captures
+            # resident tensors + attention workspace = the real footprint.
+            torch.cuda.reset_peak_memory_stats()
+
             fwd_times = benchmark_fn_all(fwd_fn, warmup=warmup, rep=rep)
 
             if fwd_bwd_fn is not None:
@@ -470,6 +579,8 @@ def run_benchmarks(
             else:
                 fwd_bwd_times = None
             torch.cuda.synchronize()  # surface any async CUDA errors before leaving the try block
+
+            peak_mem_gb = torch.cuda.max_memory_allocated() / 1e9
 
             seq_len = cols if attn_type == "col" else rows
             batch_eff = batch * rows if attn_type == "col" else batch * cols
@@ -514,6 +625,7 @@ def run_benchmarks(
                 "bwd_time_std_ms": bwd_time_std_ms,
                 "bwd_tflops": bwd_tflops,
                 "bwd_tflops_std": bwd_tflops_std,
+                "peak_mem_gb": peak_mem_gb,
             })
 
             if flush_file is not None:
@@ -526,6 +638,7 @@ def run_benchmarks(
             results.append({
                 "attn_type": attn_type,
                 "backend": backend,
+                "batch": batch,
                 "rows": rows,
                 "cols": cols,
                 "error": str(e),
@@ -548,14 +661,14 @@ def run_benchmarks(
 
 def main():
     parser = argparse.ArgumentParser(description="Benchmark tabular attention patterns")
-    parser.add_argument("--col-attn-rows", type=int, default=1024,
-                        help="Fixed row count for column attention benchmark")
-    parser.add_argument("--col-attn-cols", type=int, nargs="+", default=[16, 32, 64, 128, 256, 512, 1024, 2048],
-                        help="Column counts to benchmark for column attention")
-    parser.add_argument("--row-attn-rows", type=int, nargs="+", default=[32, 64, 128, 256, 512, 1024, 2048, 4096, 8192],
-                        help="Row counts to benchmark for row attention")
-    parser.add_argument("--row-attn-cols", type=int, default=64,
-                        help="Fixed column count for row attention benchmark")
+    parser.add_argument("--col-attn-rows", type=int, default=None,
+                        help="Fixed row count for column attention (default: from sweeps.py)")
+    parser.add_argument("--col-attn-cols", type=int, nargs="+", default=None,
+                        help="Column counts for column attention (default: from sweeps.py)")
+    parser.add_argument("--row-attn-rows", type=int, nargs="+", default=None,
+                        help="Row counts for row attention (default: from sweeps.py)")
+    parser.add_argument("--row-attn-cols", type=int, default=None,
+                        help="Fixed column count for row attention (default: from sweeps.py)")
     parser.add_argument("--headdim", type=int, default=64,
                         help="Head dimension")
     parser.add_argument("--nheads", type=int, default=12,
@@ -565,10 +678,10 @@ def main():
     parser.add_argument("--dtype", type=str, default="bfloat16",
                         choices=["float16", "bfloat16"],
                         help="Data type")
-    parser.add_argument("--warmup", type=int, default=5,
+    parser.add_argument("--warmup", type=int, default=sweeps.WARMUP,
                         help="Number of warmup iterations")
-    parser.add_argument("--rep", type=int, default=10,
-                        help="Number of repetitions for timing")
+    parser.add_argument("--rep", type=int, default=None,
+                        help="Fixed repetition count; overrides the per-shape schedule in sweeps.py")
     parser.add_argument("--backends", type=str, nargs="+",
                         default=["sdpa_efficient", "sdpa_cudnn"],
                         help="Backends to benchmark")
@@ -576,6 +689,11 @@ def main():
                         help="Run column attention benchmarks only")
     parser.add_argument("--row-only", action="store_true", default=False,
                         help="Run row attention benchmarks only")
+    parser.add_argument("--force", action="store_true", default=False,
+                        help="Recompute all shapes even if already present in the result file")
+    parser.add_argument("--batch", type=int, default=1,
+                        help="Batch size B (default 1). Folds into batch_eff = B*rows (col) "
+                             "/ B*cols (row); B>1 results go to a separate _B{n} file.")
     parser.add_argument("--debug", action="store_true", default=False,
                         help="Use debug settings")
     args = parser.parse_args()
@@ -585,6 +703,29 @@ def main():
     if args.col_only and args.row_only:
         raise ValueError("--col-only and --row-only are mutually exclusive")
 
+    # Fill unset ranges from sweeps.py for this (headdim, nheads) shape. Explicit
+    # CLI flags still override.
+    hd, nh = args.headdim, args.nheads
+    if args.col_attn_rows is None:
+        args.col_attn_rows = sweeps.col_rows_for(hd, nh)
+    if args.col_attn_cols is None:
+        args.col_attn_cols = sweeps.col_cols_for(hd, nh)
+    if args.row_attn_rows is None:
+        args.row_attn_rows = sweeps.row_ladder_for(hd, nh)
+    if args.row_attn_cols is None:
+        args.row_attn_cols = sweeps.row_cols_for(hd, nh)
+
+    # Honor per-shape direction config: if a direction isn't configured for this
+    # shape, skip it (lets the Makefile blindly loop col+row for every shape).
+    configured = sweeps.directions_for(hd, nh)
+    if args.col_only and "col" not in configured:
+        tqdm.write(f"col direction not configured for hd={hd} nh={nh}; nothing to do.")
+        return
+    if args.row_only and "row" not in configured:
+        tqdm.write(f"row direction not configured for hd={hd} nh={nh}; nothing to do.")
+        return
+
+    rep_override = args.rep
     if args.debug:
         tqdm.write("Running in DEBUG mode with reduced settings for quick iteration.")
         args.col_attn_rows = 512
@@ -594,7 +735,7 @@ def main():
         args.nheads = 12
         args.headdim = 64
         args.warmup = 1
-        args.rep = 2
+        rep_override = 2
 
     env_info = get_env_info()
 
@@ -609,12 +750,13 @@ def main():
         "causal": args.causal,
         "nheads": args.nheads,
         "headdim": args.headdim,
+        "batch": args.batch,
         "col_attn_rows": args.col_attn_rows,
         "col_attn_cols": args.col_attn_cols,
         "row_attn_rows": args.row_attn_rows,
         "row_attn_cols": args.row_attn_cols,
         "warmup": args.warmup,
-        "rep": args.rep,
+        "rep": rep_override,  # None => per-shape schedule from sweeps.py
     }
 
     url_safe_gpu = env_info['gpu'].replace(" ", "_").replace("/", "_").replace("-", "_")
@@ -629,18 +771,23 @@ def main():
     else:
         direction_suffix = ""
 
-    filename = (
-        f"CA-{args.col_attn_rows}_{'-'.join([str(i) for i in args.col_attn_cols])}"
-        f"__RA-{args.row_attn_cols}_{'-'.join([str(i) for i in args.row_attn_rows])}"
-        f"__H-{args.nheads}_HD-{args.headdim}{direction_suffix}.json"
-    )
+    # Stable filename: encodes only the invariant axes (nheads, headdim, batch,
+    # direction), NOT the swept value-lists — so extending a range merges into the
+    # same file rather than orphaning a new one. Keeps the H-/HD- tokens and the
+    # _col/_row suffix that run_benchmark_plots.py parses. The batch tag is placed
+    # BEFORE the direction suffix so _strip_direction_suffix still groups col+row,
+    # and B>1 forms a distinct group from the default B=1 (no plotter collision).
+    batch_suffix = f"_B{args.batch}" if args.batch != 1 else ""
+    filename = f"H-{args.nheads}_HD-{args.headdim}{batch_suffix}{direction_suffix}.json"
 
     # When a single backend is used (the normal Makefile case), flush results to
     # disk after every shape so a crash doesn't lose completed measurements.
     if len(args.backends) == 1:
         flush_file = results_dir / args.backends[0] / filename
+        _, completed = load_existing(flush_file)
     else:
         flush_file = None
+        completed = None
 
     results = run_benchmarks(
         col_attn_rows=args.col_attn_rows,
@@ -652,22 +799,41 @@ def main():
         dtype=dtype,
         causal=args.causal,
         warmup=args.warmup,
-        rep=args.rep,
+        rep_override=rep_override,
         backends=args.backends,
+        batch=args.batch,
         flush_file=flush_file,
         metadata=metadata,
+        completed=completed,
+        force=args.force,
     )
 
-    # Final write (also covers the multi-backend case where flush_file is None)
+    # Final write. For single-backend runs the flush already wrote the union;
+    # rewrite for consistency. For multi-backend runs merge each backend's new
+    # records with any existing ones on disk (skip-existing / --force respected
+    # inside run_benchmarks means `results` holds retained+new for single-backend;
+    # for multi-backend we merge per backend here).
     for backend in args.backends:
-        backend_results = [r for r in results if r.get("backend") == backend]
         target_file = results_dir / backend / filename
         target_file.parent.mkdir(parents=True, exist_ok=True)
+        new_records = [r for r in results if r.get("backend") == backend]
+        if flush_file is None:
+            # multi-backend: merge with existing on disk (new wins per shape key)
+            _, existing = load_existing(target_file)
+            if args.force:
+                existing = {}
+            merged = dict(existing)
+            for r in new_records:
+                merged[_shape_key(r)] = r
+            out_records = list(merged.values())
+        else:
+            out_records = new_records
         with open(target_file, "w") as f:
-            json.dump({"metadata": metadata, "results": backend_results}, f, indent=2)
-        tqdm.write(f"Results for {backend} saved to {target_file}")
+            json.dump({"metadata": metadata, "results": out_records}, f, indent=2)
+        tqdm.write(f"Results for {backend} saved to {target_file} ({len(out_records)} records)")
 
 
 
 if __name__ == "__main__":
     main()
+

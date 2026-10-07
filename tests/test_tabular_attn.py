@@ -4,12 +4,25 @@ from collections import namedtuple
 import torch
 
 from tabular_attn import (
-    col_attn_sdpa_math, col_attn_sdpa_efficient, col_attn_sdpa_cudnn, col_attn_fa2, col_attn_fa2_kv_packed, col_attn_fa3, col_attn_fa4,
-    row_attn_sdpa_math, row_attn_sdpa_efficient, row_attn_sdpa_cudnn, row_attn_fa2, row_attn_fa2_kv_packed, row_attn_fa3, row_attn_fa4,
-    FA2_AVAILABLE, FA3_AVAILABLE, FA4_AVAILABLE
+    col_attn_sdpa_math, col_attn_sdpa_efficient, col_attn_sdpa_cudnn, col_attn_fa2, col_attn_fa2_kv_packed, col_attn_fa3, col_attn_fa4, col_attn_sage, col_attn_vllm,
+    row_attn_sdpa_math, row_attn_sdpa_efficient, row_attn_sdpa_cudnn, row_attn_fa2, row_attn_fa2_kv_packed, row_attn_fa3, row_attn_fa4, row_attn_sage, row_attn_vllm,
+    FA2_AVAILABLE, FA3_AVAILABLE, FA4_AVAILABLE, SAGE_AVAILABLE, VLLM_AVAILABLE,
 )
 
-Backend = namedtuple("Backend", ["name", "kv_packed", "supports_bwd", "supports_numerical_check", "row_fn", "col_fn"])
+Backend = namedtuple("Backend", ["name", "kv_packed", "supports_bwd", "supports_numerical_check", "tight_tolerance", "row_fn", "col_fn"])
+
+# Numerical-check tolerances. Full-precision backends must match the SDPA-math
+# reference tightly; int8-quantized backends (Sage) legitimately deviate a few
+# percent, so they get a loose tolerance. The loose bound is still far tighter
+# than a broken kernel (which is off by orders of magnitude), so it catches
+# genuinely-wrong output while accepting correct quantization error.
+TIGHT_TOL = dict(atol=1e-2, rtol=1e-2)
+LOOSE_TOL = dict(atol=1e-1, rtol=1e-1)
+
+
+def _tol(attn_backend):
+    return TIGHT_TOL if attn_backend.tight_tolerance else LOOSE_TOL
+
 
 # Fixture over backends, returning both row and column attention functions.
 # Each param is tagged with a marker matching its pyproject.toml dependency group
@@ -21,12 +34,14 @@ Backend = namedtuple("Backend", ["name", "kv_packed", "supports_bwd", "supports_
 #   uv run --group fa4   pytest --backend fa4   --verbose
 @pytest.fixture(
     params=[
-        pytest.param(Backend("SDPA Efficient", kv_packed=False, supports_bwd=True,  supports_numerical_check=True,  row_fn=row_attn_sdpa_efficient, col_fn=col_attn_sdpa_efficient), id="SDPA Efficient", marks=pytest.mark.base),
-        pytest.param(Backend("SDPA cuDNN",     kv_packed=False, supports_bwd=True,  supports_numerical_check=True,  row_fn=row_attn_sdpa_cudnn,     col_fn=col_attn_sdpa_cudnn),     id="SDPA cuDNN",     marks=pytest.mark.cudnn),
-        pytest.param(Backend("FA2",            kv_packed=False, supports_bwd=True,  supports_numerical_check=True,  row_fn=row_attn_fa2,            col_fn=col_attn_fa2),            id="FA2",            marks=[pytest.mark.fa2,  pytest.mark.skipif(not FA2_AVAILABLE,  reason="FlashAttention-2 not available")]),
-        pytest.param(Backend("FA2 KV-Packed",  kv_packed=True,  supports_bwd=True,  supports_numerical_check=True,  row_fn=row_attn_fa2_kv_packed,  col_fn=col_attn_fa2_kv_packed),  id="FA2 KV-Packed",  marks=[pytest.mark.fa2,  pytest.mark.skipif(not FA2_AVAILABLE,  reason="FlashAttention-2 not available")]),
-        pytest.param(Backend("FA3",            kv_packed=False, supports_bwd=True,  supports_numerical_check=True,  row_fn=row_attn_fa3,            col_fn=col_attn_fa3),            id="FA3",            marks=[pytest.mark.fa3,  pytest.mark.skipif(not FA3_AVAILABLE,  reason="FlashAttention-3 not available")]),
-        pytest.param(Backend("FA4",            kv_packed=False, supports_bwd=True,  supports_numerical_check=True,  row_fn=row_attn_fa4,            col_fn=col_attn_fa4),            id="FA4",            marks=[pytest.mark.fa4,  pytest.mark.skipif(not FA4_AVAILABLE,  reason="FlashAttention-4 not available")]),
+        pytest.param(Backend("SDPA Efficient", kv_packed=False, supports_bwd=True,  supports_numerical_check=True,  tight_tolerance=True,  row_fn=row_attn_sdpa_efficient, col_fn=col_attn_sdpa_efficient), id="SDPA Efficient", marks=pytest.mark.base),
+        pytest.param(Backend("SDPA cuDNN",     kv_packed=False, supports_bwd=True,  supports_numerical_check=True,  tight_tolerance=True,  row_fn=row_attn_sdpa_cudnn,     col_fn=col_attn_sdpa_cudnn),     id="SDPA cuDNN",     marks=pytest.mark.cudnn),
+        pytest.param(Backend("FA2",            kv_packed=False, supports_bwd=True,  supports_numerical_check=True,  tight_tolerance=True,  row_fn=row_attn_fa2,            col_fn=col_attn_fa2),            id="FA2",            marks=[pytest.mark.fa2,  pytest.mark.skipif(not FA2_AVAILABLE,  reason="FlashAttention-2 not available")]),
+        pytest.param(Backend("FA2 KV-Packed",  kv_packed=True,  supports_bwd=True,  supports_numerical_check=True,  tight_tolerance=True,  row_fn=row_attn_fa2_kv_packed,  col_fn=col_attn_fa2_kv_packed),  id="FA2 KV-Packed",  marks=[pytest.mark.fa2,  pytest.mark.skipif(not FA2_AVAILABLE,  reason="FlashAttention-2 not available")]),
+        pytest.param(Backend("FA3",            kv_packed=False, supports_bwd=True,  supports_numerical_check=True,  tight_tolerance=True,  row_fn=row_attn_fa3,            col_fn=col_attn_fa3),            id="FA3",            marks=[pytest.mark.fa3,  pytest.mark.skipif(not FA3_AVAILABLE,  reason="FlashAttention-3 not available")]),
+        pytest.param(Backend("FA4",            kv_packed=False, supports_bwd=True,  supports_numerical_check=True,  tight_tolerance=True,  row_fn=row_attn_fa4,            col_fn=col_attn_fa4),            id="FA4",            marks=[pytest.mark.fa4,  pytest.mark.skipif(not FA4_AVAILABLE,  reason="FlashAttention-4 not available")]),
+        pytest.param(Backend("Sage",           kv_packed=False, supports_bwd=False, supports_numerical_check=True,  tight_tolerance=False, row_fn=row_attn_sage,           col_fn=col_attn_sage),           id="Sage",           marks=[pytest.mark.sage, pytest.mark.skipif(not SAGE_AVAILABLE,  reason="SageAttention not available")]),
+        pytest.param(Backend("vLLM",           kv_packed=False, supports_bwd=False, supports_numerical_check=True,  tight_tolerance=True,  row_fn=row_attn_vllm,           col_fn=col_attn_vllm),           id="vLLM",           marks=[pytest.mark.vllm, pytest.mark.skipif(not VLLM_AVAILABLE,  reason="vLLM not available")]),
     ],
 )
 def attn_backend(request):
@@ -58,6 +73,11 @@ def dtype(request):
 
 @pytest.fixture
 def attn_tensors(batch, rows, cols, num_heads, headdim, dtype):
+    # Fixed seed so inputs are deterministic across runs and identical across
+    # backends. Without this, unseeded bf16 inputs make the backward-gradient
+    # allclose check (atol/rtol 1e-2) flaky: an unlucky draw occasionally
+    # produces a max elementwise error just over tolerance.
+    torch.manual_seed(0)
     q = torch.randn(batch, rows, cols, num_heads, headdim, device="cuda", dtype=dtype, requires_grad=True)
     k = torch.randn_like(q)
     v = torch.randn_like(q)
@@ -99,7 +119,7 @@ def test_col_attention_fwd(attn_backend, attn_tensors):
         ref = reference_col_attn(q, k, v)
     assert out.shape == q.shape, f"{attn_backend.name} column attention forward output shape mismatch: expected {q.shape}, got {out.shape}"
     if attn_backend.supports_numerical_check:
-        assert torch.allclose(out, ref, atol=1e-2, rtol=1e-2), f"{attn_backend.name} column attention forward output mismatch from reference"
+        assert torch.allclose(out, ref, **_tol(attn_backend)), f"{attn_backend.name} column attention forward output mismatch from reference"
 
 
 def test_col_attention_bwd(attn_backend, attn_tensors):
@@ -139,7 +159,7 @@ def test_row_attention_fwd(attn_backend, attn_tensors):
         ref = reference_row_attn(q, k, v)
     assert out.shape == q.shape, f"{attn_backend.name} row attention forward output shape mismatch: expected {q.shape}, got {out.shape}"
     if attn_backend.supports_numerical_check:
-        assert torch.allclose(out, ref, atol=1e-2, rtol=1e-2), f"{attn_backend.name} row attention forward output mismatch from reference"
+        assert torch.allclose(out, ref, **_tol(attn_backend)), f"{attn_backend.name} row attention forward output mismatch from reference"
 
 
 def test_row_attention_bwd(attn_backend, attn_tensors):
