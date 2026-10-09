@@ -1,0 +1,159 @@
+{
+  "metadata": {
+    "timestamp": "2026-07-25T18:08:48.801778",
+    "gpu": "NVIDIA H100 NVL",
+    "pytorch_version": "2.10.0+cu130",
+    "cuda_version": "13.0",
+    "cudnn_version": "9.15.1",
+    "cudnn_enabled": true,
+    "dtype": "bfloat16",
+    "causal": false,
+    "nheads": 6,
+    "headdim": 32,
+    "batch": 1,
+    "col_attn_rows": 1024,
+    "col_attn_cols": [
+      16,
+      32,
+      64,
+      128,
+      256,
+      512,
+      1024,
+      2048
+    ],
+    "row_attn_rows": [
+      32,
+      64,
+      128,
+      256,
+      512,
+      1024,
+      2048,
+      4096,
+      8192,
+      16384,
+      32768,
+      65536,
+      98304,
+      131072
+    ],
+    "row_attn_cols": 64,
+    "warmup": 3,
+    "rep": null
+  },
+  "results": [
+    {
+      "attn_type": "row",
+      "backend": "fa4",
+      "batch": 1,
+      "rows": 32,
+      "cols": 64,
+      "error": ""
+    },
+    {
+      "attn_type": "row",
+      "backend": "fa4",
+      "batch": 1,
+      "rows": 64,
+      "cols": 64,
+      "error": ""
+    },
+    {
+      "attn_type": "row",
+      "backend": "fa4",
+      "batch": 1,
+      "rows": 128,
+      "cols": 64,
+      "error": ""
+    },
+    {
+      "attn_type": "row",
+      "backend": "fa4",
+      "batch": 1,
+      "rows": 256,
+      "cols": 64,
+      "error": ""
+    },
+    {
+      "attn_type": "row",
+      "backend": "fa4",
+      "batch": 1,
+      "rows": 512,
+      "cols": 64,
+      "error": ""
+    },
+    {
+      "attn_type": "row",
+      "backend": "fa4",
+      "batch": 1,
+      "rows": 1024,
+      "cols": 64,
+      "error": ""
+    },
+    {
+      "attn_type": "row",
+      "backend": "fa4",
+      "batch": 1,
+      "rows": 2048,
+      "cols": 64,
+      "error": ""
+    },
+    {
+      "attn_type": "row",
+      "backend": "fa4",
+      "batch": 1,
+      "rows": 4096,
+      "cols": 64,
+      "error": ""
+    },
+    {
+      "attn_type": "row",
+      "backend": "fa4",
+      "batch": 1,
+      "rows": 8192,
+      "cols": 64,
+      "error": ""
+    },
+    {
+      "attn_type": "row",
+      "backend": "fa4",
+      "batch": 1,
+      "rows": 16384,
+      "cols": 64,
+      "error": ""
+    },
+    {
+      "attn_type": "row",
+      "backend": "fa4",
+      "batch": 1,
+      "rows": 32768,
+      "cols": 64,
+      "error": ""
+    },
+    {
+      "attn_type": "row",
+      "backend": "fa4",
+      "batch": 1,
+      "rows": 65536,
+      "cols": 64,
+      "error": ""
+    },
+    {
+      "attn_type": "row",
+      "backend": "fa4",
+      "batch": 1,
+      "rows": 98304,
+      "cols": 64,
+      "error": ""
+    },
+    {
+      "attn_type": "row",
+      "backend": "fa4",
+      "batch": 1,
+      "rows": 131072,
+      "cols": 64,
+      "error": ""
+    }
+  ]
+}
